@@ -1,0 +1,29 @@
+from flask import Flask, jsonify, render_template
+import adafruit_dht
+import board
+import time
+
+app = Flask(__name__)
+
+# Set up DHT22 on GPIO4 (board.D4)
+dht_device = adafruit_dht.DHT22(board.D4)
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/data')
+def data():
+    try:
+        temperature = dht_device.temperature
+        humidity = dht_device.humidity
+        return jsonify(temperature=round(temperature, 1), humidity=round(humidity, 1))
+    except RuntimeError as e:
+        return jsonify(error=str(e))
+    except Exception as e:
+        dht_device.exit()
+        return jsonify(error="Fatal error: " + str(e))
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
+

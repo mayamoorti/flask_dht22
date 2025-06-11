@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DHT22 Live Data Log</title>
+    <style>
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1em;
+        }
+        th, td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: center;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        tbody tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        #clear-log-btn {
+            margin-top: 10px;
+            padding: 6px 12px;
+            font-size: 1em;
+            cursor: pointer;
+        }
+    </style>
+    <script>
+        async function appendLatestData() {
+            try {
+                const response = await fetch('/data');
+                const data = await response.json();
+                const tableBody = document.getElementById("data-log");
+
+                if (data.error) {
+                    const row = document.createElement("tr");
+                    row.innerHTML = `
+                        <td>${new Date().toLocaleTimeString()}</td>
+                        <td colspan="2">Error: ${data.error}</td>
+                    `;
+                    tableBody.prepend(row);
+                } else {
+                    const row = document.createElement("tr");
+                    row.innerHTML = `
+                        <td>${data.timestamp}</td>
+                        <td>${data.temperature} °C</td>
+                        <td>${data.humidity} %</td>
+                    `;
+                    tableBody.prepend(row);
+                }
+            } catch (err) {
+                const tableBody = document.getElementById("data-log");
+                const row = document.createElement("tr");
+                row.innerHTML = `
+                    <td>${new Date().toLocaleTimeString()}</td>
+                    <td colspan="2">Fetch error: ${err}</td>
+                `;
+                tableBody.prepend(row);
+            }
+        }
+
+        async function loadFullLog() {
+            try {
+                const response = await fetch('/log');
+                const logData = await response.json();
+                const tableBody = document.getElementById("data-log");
+                tableBody.innerHTML = '';
+
+                if (logData.error) {
+                    tableBody.innerHTML = `<tr><td colspan="3">Error: ${logData.error}</td></tr>`;
+                    return;
+                }
+
+                for (const entry of logData) {
+                    const row = document.createElement("tr");
+                    row.innerHTML = `
+                        <td>${entry.timestamp}</td>
+                        <td>${entry.temperature} °C</td>
+                        <td>${entry.humidity} %</td>
+                    `;
+                    tableBody.appendChild(row);
+                }
+            } catch (err) {
+                const tableBody = document.getElementById("data-log");
+                tableBody.innerHTML = `<tr><td colspan="3">Log fetch error: ${err}</td></tr>`;
+            }
+        }
+
+        // Load full log once on page load
+        window.onload = () => {
+            loadFullLog();
+            setInterval(appendLatestData, 5000); // Append new data every 5 minutes
+        };
+
+        // Clear log when button clicked
+        window.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('clear-log-btn').addEventListener('click', () => {
+                if (confirm("Clear the log file? This cannot be undone.")) {
+                    fetch('/clear', { method: 'POST' }).then(() => loadFullLog());
+                }
+            });
+        });
+    </script>
+</head>
+<body>
+    <h1>DHT22 Sensor Data Log</h1>
+    <button id="clear-log-btn">Clear Log</button>
+    <table>
+        <thead>
+            <tr>
+                <th>Timestamp</th>
+                <th>Temperature</th>
+                <th>Humidity</th>
+            </tr>
+        </thead>
+        <tbody id="data-log">
+            <!-- Log entries will appear here -->
+        </tbody>
+    </table>
+</body>
+</html>
+
