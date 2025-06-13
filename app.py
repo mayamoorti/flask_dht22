@@ -7,93 +7,139 @@ import csv
 import os
 from datetime import datetime
 
+# === Flask Setup ===
 app = Flask(__name__)
 
-# Sensor and LED setup
+# === Config Constants ===
 DHT_PIN = board.D4
-dht_device = adafruit_dht.DHT22(DHT_PIN)
-
-led = digitalio.DigitalInOut(board.D17)
-led.direction = digitalio.Direction.OUTPUT
-led.value = False
-
-# Log file path
+LED_PIN = board.D17
 LOG_FILE = 'log.csv'
+TEMP_RANGE = (18, 27)  # °C
+HUM_RANGE = (40, 60)   # %
+LED_BLINK_COUNT = 10
+LED_BLINK_DELAY = 0.3
 
-# Ensure the log file exists with headers
-if not os.path.exists(LOG_FILE):
+# === Hardware Setup ===
+def setup_sensor():
+    return adafruit_dht.DHT22(DHT_PIN)
+
+def setup_led():
+    led_device = digitalio.DigitalInOut(LED_PIN)
+    led_device.direction = digitalio.Direction.OUTPUT
+    led_device.value = False
+    return led_device
+
+# Initialize devices
+dht_device = setup_sensor()
+led = setup_led()
+
+# === Initialization ===
+def initialize_log():
+    if not os.path.exists(LOG_FILE):
+        write_log_header()
+
+def write_log_header():
     with open(LOG_FILE, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['timestamp', 'temperature', 'humidity'])
 
-@app.route('/')
-def index():
-    return render_template('index.html')
+# === Utility Functions ===
+def get_timestamp():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-@app.route('/data')
-def data():
-    temperature = None
-    humidity = None
-
-    for _ in range(3):
+def read_sensor(max_retries=3):
+    for _ in range(max_retries):
         try:
             temperature = dht_device.temperature
             humidity = dht_device.humidity
             if temperature is not None and humidity is not None:
-                break
+                return round(temperature, 1), round(humidity, 1)
         except RuntimeError:
             time.sleep(1)
         except Exception as e:
-            return jsonify(error=f"Unexpected error: {e}")
+            app.logger.exception("Sensor exception")
+            raise RuntimeError(f"Sensor read error: {e}")
+    raise RuntimeError("Sensor failed after retries")
 
-    if temperature is None or humidity is None:
-        return jsonify(error="Sensor read error: no valid reading after retries")
+def blink_led(times=LED_BLINK_COUNT, delay=LED_BLINK_DELAY):
+    for _ in range(times):
+        led.value = True
+        time.sleep(delay)
+        led.value = False
+        time.sleep(delay)
 
-    # Flash LED if values are out of range
-    temp_ok = 18 <= temperature <= 27
-    hum_ok = 40 <= humidity <= 60
-    if not (temp_ok and hum_ok):
-        for _ in range(10):
-            led.value = True
-            time.sleep(0.3)
-            led.value = False
-            time.sleep(0.3)
+def is_within_range(value, min_val, max_val):
+    return min_val <= value <= max_val
+
+def log_data(timestamp, temperature, humidity):
+    try:
+        with open(LOG_FILE, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([timestamp, temperature, humidity])
+    except Exception as e:
+        app.logger.error(f"Log write error: {e}")
+
+def read_log():
+    try:
+        with open(LOG_FILE, 'r') as f:
+            return list(csv.DictReader(f))[::-1]
+    except Exception as e:
+        app.logger.error(f"Log read error: {e}")
+        raise RuntimeError("Failed to read log")
+
+def clear_log():
+    try:
+        write_log_header()
+    except Exception as e:
+        app.logger.error(f"Log clear error: {e}")
+        raise RuntimeError("Failed to clear log")
+
+# === API Routes ===
+@app.route('/')
+def serve_ui():
+    return render_template('index.html')
+
+@app.route('/api/v1/data', methods=['GET'])
+def api_get_data():
+    try:
+        temperature, humidity = read_sensor()
+    except RuntimeError as e:
+        return jsonify({'error': str(e)}), 500
+
+    if not is_within_range(temperature, *TEMP_RANGE) or not is_within_range(humidity, *HUM_RANGE):
+        blink_led()
     else:
         led.value = False
 
-    # Timestamp
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = get_timestamp()
+    log_data(timestamp, temperature, humidity)
 
-    # Append to log file
-    with open(LOG_FILE, 'a', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow([timestamp, round(temperature, 1), round(humidity, 1)])
+    return jsonify({
+        'timestamp': timestamp,
+        'temperature': temperature,
+        'humidity': humidity
+    }), 200
 
-    return jsonify(
-        timestamp=timestamp,
-        temperature=round(temperature, 1),
-        humidity=round(humidity, 1)
-    )
-
-@app.route('/log')
-def log():
+@app.route('/api/v1/log', methods=['GET'])
+def api_get_log():
     try:
-        with open(LOG_FILE, 'r') as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)[::-1]  # Reverse so newest is on top
-            return jsonify(rows)
-    except Exception as e:
-        return jsonify(error=f"Log read error: {e}")
+        rows = read_log()
+        return jsonify(rows), 200
+    except RuntimeError as e:
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/clear', methods=['POST'])
-def clear_log():
+@app.route('/api/v1/clear', methods=['POST'])
+def api_clear_log():
     try:
-        with open(LOG_FILE, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(['timestamp', 'temperature', 'humidity'])
-        return '', 204  # No content
-    except Exception as e:
-        return jsonify(error=f"Failed to clear log: {e}"), 500
+        clear_log()
+        return '', 204
+    except RuntimeError as e:
+        return jsonify({'error': str(e)}), 500
+
+# === Entrypoint ===
+def run():
+    initialize_log()
+    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
+    run()
