@@ -1,181 +1,146 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DHT22 Live Data Log</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 2em;
-      background-color: #fafafa;
-    }
-
-    h1 {
-      text-align: center;
-    }
-
-    button {
-      padding: 10px 16px;
-      margin-bottom: 1em;
-      font-size: 1em;
-      cursor: pointer;
-      background-color: #007BFF;
-      color: white;
-      border: none;
-      border-radius: 4px;
-    }
-
-    button:hover {
-      background-color: #0056b3;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 1em;
-      box-shadow: 0 0 5px rgba(0, 0, 0, 0.1);
-    }
-
-    th, td {
-      border: 1px solid #ccc;
-      padding: 12px;
-      text-align: center;
-    }
-
-    th {
-      background-color: #f2f2f2;
-    }
-
-    tbody tr:nth-child(even) {
-      background-color: #f9f9f9;
-    }
-
-    .error {
-      color: red;
-      font-weight: bold;
-      text-align: center;
-      margin-top: 1em;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <title>DHT22 Live Data Log</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1em;
+        }
+        th, td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: center;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        tbody tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        #clear-log-btn {
+            margin-top: 10px;
+            padding: 8px 16px;
+            font-size: 1em;
+            cursor: pointer;
+        }
+        #error {
+            color: red;
+            margin-top: 10px;
+        }
+    </style>
 </head>
 <body>
-
-  <h1>DHT22 Sensor Data Log</h1>
-  <div style="text-align: center;">
+    <h1>DHT22 Sensor Data Log</h1>
     <button id="clear-log-btn">Clear Log</button>
-  </div>
+    <div id="error"></div>
+    <table>
+        <thead>
+            <tr>
+                <th>Timestamp</th>
+                <th>Temperature</th>
+                <th>Humidity</th>
+            </tr>
+        </thead>
+        <tbody id="data-log">
+            <!-- Log entries will be inserted here -->
+        </tbody>
+    </table>
 
-  <table>
-    <thead>
-      <tr>
-        <th>Timestamp</th>
-        <th>Temperature</th>
-        <th>Humidity</th>
-      </tr>
-    </thead>
-    <tbody id="data-log">
-      <!-- Data rows injected here -->
-    </tbody>
-  </table>
+    <script>
+        const API_BASE = '/api/v1';
 
-  <div id="error-message" class="error" style="display: none;"></div>
+        const showError = (msg) => {
+            const errorDiv = document.getElementById("error");
+            errorDiv.textContent = msg;
+        };
 
-  <script>
-    const API = {
-      data: '/data',
-      log: '/log',
-      clear: '/clear'
-    };
+        const safeJson = async (response) => {
+            const contentType = response.headers.get("content-type");
+            if (contentType && contentType.includes("application/json")) {
+                return await response.json();
+            }
+            throw new Error("Expected JSON response.");
+        };
 
-    const tableBody = document.getElementById('data-log');
-    const errorMsg = document.getElementById('error-message');
+        async function appendLatestData() {
+            try {
+                const res = await fetch(`${API_BASE}/data`);
+                const data = await safeJson(res);
 
-    const createRowHTML = (timestamp, temperature, humidity) => `
-      <tr>
-        <td>${timestamp}</td>
-        <td>${temperature} °C</td>
-        <td>${humidity} %</td>
-      </tr>
-    `;
-
-    const createErrorRow = (message) => `
-      <tr>
-        <td>${new Date().toLocaleTimeString()}</td>
-        <td colspan="2">${message}</td>
-      </tr>
-    `;
-
-    const showError = (message) => {
-      errorMsg.textContent = message;
-      errorMsg.style.display = 'block';
-    };
-
-    const hideError = () => {
-      errorMsg.textContent = '';
-      errorMsg.style.display = 'none';
-    };
-
-    const loadFullLog = async () => {
-      hideError();
-      try {
-        const response = await fetch(API.log);
-        const data = await response.json();
-
-        tableBody.innerHTML = '';
-
-        if (data.error) {
-          showError(`Log error: ${data.error}`);
-          return;
+                if (data.error) {
+                    addTableRow({ timestamp: new Date().toLocaleTimeString(), error: data.error });
+                } else {
+                    addTableRow(data);
+                }
+            } catch (err) {
+                addTableRow({ timestamp: new Date().toLocaleTimeString(), error: `Fetch error: ${err.message}` });
+            }
         }
 
-        data.forEach(entry => {
-          tableBody.insertAdjacentHTML('beforeend',
-            createRowHTML(entry.timestamp, entry.temperature, entry.humidity));
+        async function loadFullLog() {
+            try {
+                const res = await fetch(`${API_BASE}/log`);
+                const log = await safeJson(res);
+
+                if (log.error) {
+                    showError(`Error: ${log.error}`);
+                    return;
+                }
+
+                const tableBody = document.getElementById("data-log");
+                tableBody.innerHTML = '';
+
+                for (const entry of log) {
+                    addTableRow(entry);
+                }
+            } catch (err) {
+                showError(`Log fetch error: ${err.message}`);
+            }
+        }
+
+        function addTableRow(entry) {
+            const row = document.createElement("tr");
+            if (entry.error) {
+                row.innerHTML = `<td>${entry.timestamp}</td><td colspan="2" style="color:red;">${entry.error}</td>`;
+            } else {
+                row.innerHTML = `
+                    <td>${entry.timestamp}</td>
+                    <td>${entry.temperature} °C</td>
+                    <td>${entry.humidity} %</td>
+                `;
+            }
+            const tableBody = document.getElementById("data-log");
+            tableBody.prepend(row);
+        }
+
+        async function clearLog() {
+            if (!confirm("Clear the log file? This cannot be undone.")) return;
+
+            try {
+                const res = await fetch(`${API_BASE}/clear`, { method: 'POST' });
+                if (!res.ok) {
+                    const text = await res.text();
+                    throw new Error(text || 'Failed to clear log.');
+                }
+                await loadFullLog(); // Refresh after clear
+            } catch (err) {
+                showError(`Error clearing log: ${err.message}`);
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            loadFullLog();
+            setInterval(appendLatestData, 5000); // every 5 sec
+
+            document.getElementById('clear-log-btn').addEventListener('click', clearLog);
         });
-
-      } catch (err) {
-        showError(`Failed to load log: ${err}`);
-      }
-    };
-
-    const appendLatestData = async () => {
-      try {
-        const response = await fetch(API.data);
-        const data = await response.json();
-
-        if (data.error) {
-          tableBody.insertAdjacentHTML('afterbegin', createErrorRow(`Sensor error: ${data.error}`));
-        } else {
-          const row = createRowHTML(data.timestamp, data.temperature, data.humidity);
-          tableBody.insertAdjacentHTML('afterbegin', row);
-        }
-      } catch (err) {
-        tableBody.insertAdjacentHTML('afterbegin', createErrorRow(`Fetch error: ${err.message}`));
-      }
-    };
-
-    const clearLog = async () => {
-      if (!confirm("Are you sure you want to clear the log? This cannot be undone.")) return;
-      try {
-        const response = await fetch(API.clear, { method: 'POST' });
-        if (response.ok) {
-          await loadFullLog();
-        } else {
-          showError("Failed to clear the log.");
-        }
-      } catch (err) {
-        showError(`Error clearing log: ${err}`);
-      }
-    };
-
-    document.getElementById('clear-log-btn').addEventListener('click', clearLog);
-
-    // Initial load
-    window.addEventListener('DOMContentLoaded', async () => {
-      await loadFullLog();
-      setInterval(appendLatestData, 5000); // update every 5 seconds
-    });
-  </script>
+    </script>
 </body>
 </html>
